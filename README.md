@@ -98,10 +98,10 @@ cd kushodo_brochure_gen
 cp .env.example .env
 ```
 
-`.env` の `DOMAIN` を自分のドメインに変更します。
+`.env` の `DOMAIN` を自分のドメインに変更します。複数ホスト名で同じアプリを出す場合はカンマ区切りで書きます。
 
 ```env
-DOMAIN=example.com
+DOMAIN=example.com, www.example.com
 ```
 
 ### 5. 起動
@@ -110,10 +110,12 @@ DOMAIN=example.com
 docker compose up -d --build
 ```
 
-Caddy が自動で HTTPS 証明書を取得します。DNS 反映前に起動すると証明書取得に失敗することがあるので、その場合は少し待ってから再起動してください。
+Caddy が自動で HTTPS 証明書を取得します。DNS 反映前に起動すると証明書取得に失敗することがあるので、その場合は少し待ってから Caddy を再作成してください。
+
+`.env` の `DOMAIN` を変えたときも、`restart` では環境変数が更新されないため、次のコマンドでコンテナを作り直します。
 
 ```sh
-docker compose restart caddy
+docker compose up -d
 ```
 
 ## 更新

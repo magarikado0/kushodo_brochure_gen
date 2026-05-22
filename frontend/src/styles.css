@@ -271,6 +271,15 @@ h2 {
   font-size: 14px;
 }
 
+.noteCard a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.noteCard a:hover {
+  color: var(--accent-hover);
+}
+
 .requirementsCard {
   margin-bottom: 20px;
   padding: 0;

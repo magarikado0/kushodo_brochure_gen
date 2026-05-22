@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+const GITHUB_REPO_URL = "https://github.com/magarikado0/kushodo_brochure_gen";
 
 function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -120,8 +121,14 @@ function App() {
         </form>
 
         <aside className="noteCard">
-          <h2>生成後にすること</h2>
-          <p>作品画像は自動では入りません。Word ファイル内の画像プレースホルダに手で配置してください。</p>
+          <h2>フィードバック</h2>
+          <p>
+            うまくいかないことや改善点・ご要望があれば、
+            <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer">
+              GitHub リポジトリ
+            </a>
+            から Issue を書いたり、Pull Request を送ってください。
+          </p>
         </aside>
       </main>
     </div>
