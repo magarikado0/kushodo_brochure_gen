@@ -153,7 +153,7 @@ function FileRequirements() {
             <h3>作品情報フォーム（xlsx）</h3>
             <div className="requirementBody">
               <p>
-                <code>個人</code> と <code>合作</code> の2シートが必要です。シート名は変えないでください。
+                <code>個人</code> と <code>合作</code> の2シートが必要です。シート名にはそれぞれ「個人」「合作」を含めてください。
                 列の順番は変わっても大丈夫ですが、列名の先頭部分は変えないでください。
               </p>
               <p>個人シートに必要な列:</p>

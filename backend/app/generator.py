@@ -255,10 +255,44 @@ def display_participant_grades(value: str) -> str:
     return text
 
 
+def find_sheets_by_keyword(
+    sheets: dict[str, SheetData],
+    keyword: str,
+    *,
+    exclude: set[str] | None = None,
+) -> list[str]:
+    excluded = exclude or set()
+    return [name for name in sheets if keyword in name and name not in excluded]
+
+
+def resolve_sheet_name(
+    sheets: dict[str, SheetData],
+    keyword: str,
+    *,
+    exclude: set[str] | None = None,
+) -> str:
+    matches = find_sheets_by_keyword(sheets, keyword, exclude=exclude)
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        found_sheets = "、".join(sheets) if sheets else "なし"
+        raise UserFacingError(
+            "入力Excelファイルのシート名を確認してください。\n"
+            f"「{keyword}」を含むシートが見つかりません。\n"
+            f"見つかったシート: {found_sheets}\n"
+            f"直し方: シート名に「{keyword}」を含めてください。"
+        )
+    raise UserFacingError(
+        "入力Excelファイルのシート名を確認してください。\n"
+        f"「{keyword}」を含むシートが複数あります: {'、'.join(matches)}\n"
+        f"直し方: 「{keyword}」を含むシートは1つだけにしてください。"
+    )
+
+
 def build_works(sheets: dict[str, SheetData]) -> list[Work]:
-    validate_input_sheets(sheets)
-    personal = sheets["個人"].rows
-    collaboration = sheets["合作"].rows
+    sheet_names = validate_input_sheets(sheets)
+    personal = sheets[sheet_names["個人"]].rows
+    collaboration = sheets[sheet_names["合作"]].rows
 
     personal_works: list[dict[str, str]] = []
     for row in personal:
@@ -312,19 +346,16 @@ def build_works(sheets: dict[str, SheetData]) -> list[Work]:
     return works
 
 
-def validate_input_sheets(sheets: dict[str, SheetData]) -> None:
-    missing_sheets = [sheet_name for sheet_name in REQUIRED_COLUMNS if sheet_name not in sheets]
-    if missing_sheets:
-        found_sheets = "、".join(sheets) if sheets else "なし"
-        raise UserFacingError(
-            "入力Excelファイルのシート名を確認してください。\n"
-            f"足りないシート: {'、'.join(missing_sheets)}\n"
-            f"見つかったシート: {found_sheets}\n"
-            "直し方: Excel下部のシート名を「個人」と「合作」にしてください。余分な文字やスペースも入れないでください。"
-        )
+def validate_input_sheets(sheets: dict[str, SheetData]) -> dict[str, str]:
+    sheet_names: dict[str, str] = {}
+    used: set[str] = set()
+    for keyword in REQUIRED_COLUMNS:
+        sheet_names[keyword] = resolve_sheet_name(sheets, keyword, exclude=used)
+        used.add(sheet_names[keyword])
 
     missing_by_sheet: list[str] = []
-    for sheet_name, required_columns in REQUIRED_COLUMNS.items():
+    for keyword, required_columns in REQUIRED_COLUMNS.items():
+        sheet_name = sheet_names[keyword]
         headers = sheets[sheet_name].headers
         missing_columns = [column for column in required_columns if not has_matching_header(headers, column)]
         if missing_columns:
@@ -337,11 +368,13 @@ def validate_input_sheets(sheets: dict[str, SheetData]) -> None:
             + "\n直し方: 1行目の列名をフォームの元の名前に戻してください。説明文が後ろに続くのは問題ありません。"
         )
 
-    if all(not sheets[sheet_name].rows for sheet_name in REQUIRED_COLUMNS):
+    if all(not sheets[sheet_name].rows for sheet_name in sheet_names.values()):
         raise UserFacingError(
             "入力Excelファイルに作品データがありません。\n"
             "直し方: 1行目は列名のままにして、2行目以降に作品情報を入力してください。"
         )
+
+    return sheet_names
 
 
 def has_matching_header(headers: list[str], starts_with: str) -> bool:
