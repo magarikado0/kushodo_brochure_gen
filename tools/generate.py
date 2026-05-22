@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import os
 import re
 import textwrap
 import zipfile
@@ -67,6 +68,46 @@ class Work:
     artport: str
 
 
+@dataclass(frozen=True)
+class SheetData:
+    headers: list[str]
+    rows: list[dict[str, str]]
+
+
+class UserFacingError(Exception):
+    """An error message intended to be shown directly to non-technical users."""
+
+
+REQUIRED_COLUMNS = {
+    "個人": [
+        "氏名",
+        "ふりがな",
+        "学年",
+        "臨書 or 創作",
+        "書体",
+        "作品名",
+        "作品の向き",
+        "作品サイズ",
+        "展示場所",
+        "表装形式",
+        "釈文",
+        "作品コメント",
+    ],
+    "合作": [
+        "合作参加者全員分",
+        "臨書 or 創作",
+        "書体",
+        "作品名",
+        "作品の向き",
+        "作品サイズ",
+        "展示場所",
+        "表装形式",
+        "釈文",
+        "作品コメント",
+    ],
+}
+
+
 def normalize_space(value: str) -> str:
     return re.sub(r"[ \t\u3000]+", " ", value.strip())
 
@@ -97,19 +138,41 @@ def cell_value(cell: ET.Element, shared_strings: list[str]) -> str:
     return ""
 
 
-def read_xlsx(path: Path) -> dict[str, list[dict[str, str]]]:
-    with zipfile.ZipFile(path) as book:
+def read_xlsx(path: Path) -> dict[str, SheetData]:
+    try:
+        book = zipfile.ZipFile(path)
+    except FileNotFoundError as exc:
+        raise UserFacingError(
+            f"入力Excelファイルが見つかりません。\n"
+            f"確認する場所: {path}\n"
+            "直し方: input フォルダに 作品情報フォーム.xlsx を置いてから、もう一度実行してください。"
+        ) from exc
+    except zipfile.BadZipFile as exc:
+        raise UserFacingError(
+            f"入力Excelファイルを開けませんでした。\n"
+            f"ファイル: {path}\n"
+            "直し方: Excelで開ける .xlsx ファイルか確認してください。古い .xls 形式や、壊れたファイルは使えません。"
+        ) from exc
+
+    with book:
         shared_strings: list[str] = []
         if "xl/sharedStrings.xml" in book.namelist():
             shared_xml = ET.fromstring(book.read("xl/sharedStrings.xml"))
             for item in shared_xml.findall("a:si", SPREADSHEET_NS):
                 shared_strings.append("".join(text.text or "" for text in item.findall(".//a:t", SPREADSHEET_NS)))
 
-        workbook = ET.fromstring(book.read("xl/workbook.xml"))
-        rels = ET.fromstring(book.read("xl/_rels/workbook.xml.rels"))
+        try:
+            workbook = ET.fromstring(book.read("xl/workbook.xml"))
+            rels = ET.fromstring(book.read("xl/_rels/workbook.xml.rels"))
+        except KeyError as exc:
+            raise UserFacingError(
+                f"入力Excelファイルの中身を読み取れませんでした。\n"
+                f"ファイル: {path}\n"
+                "直し方: Excelで開いて、別名で .xlsx として保存し直してから、もう一度実行してください。"
+            ) from exc
         rel_map = {rel.attrib["Id"]: rel.attrib["Target"] for rel in rels}
 
-        sheets: dict[str, list[dict[str, str]]] = {}
+        sheets: dict[str, SheetData] = {}
         for sheet in workbook.findall(".//a:sheet", SPREADSHEET_NS):
             sheet_name = sheet.attrib["name"]
             rel_id = sheet.attrib["{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"]
@@ -126,16 +189,17 @@ def read_xlsx(path: Path) -> dict[str, list[dict[str, str]]]:
                 raw_rows.append(values)
 
             if not raw_rows:
-                sheets[sheet_name] = []
+                sheets[sheet_name] = SheetData(headers=[], rows=[])
                 continue
 
             headers = raw_rows[0]
+            header_names = [header for header in headers.values() if header]
             records: list[dict[str, str]] = []
             for row in raw_rows[1:]:
                 record = {header: row.get(col, "").strip() for col, header in headers.items() if header}
                 if any(record.values()):
                     records.append(record)
-            sheets[sheet_name] = records
+            sheets[sheet_name] = SheetData(headers=header_names, rows=records)
 
         return sheets
 
@@ -201,9 +265,10 @@ def display_participant_grades(value: str) -> str:
     return text
 
 
-def build_works(sheets: dict[str, list[dict[str, str]]]) -> list[Work]:
-    personal = sheets.get("個人", [])
-    collaboration = sheets.get("合作", [])
+def build_works(sheets: dict[str, SheetData]) -> list[Work]:
+    validate_input_sheets(sheets)
+    personal = sheets["個人"].rows
+    collaboration = sheets["合作"].rows
 
     personal_works: list[dict[str, str]] = []
     for row in personal:
@@ -255,6 +320,42 @@ def build_works(sheets: dict[str, list[dict[str, str]]]) -> list[Work]:
     for number, item in enumerate([*personal_works, *collaboration_works], start=1):
         works.append(Work(number=number, **item))
     return works
+
+
+def validate_input_sheets(sheets: dict[str, SheetData]) -> None:
+    missing_sheets = [sheet_name for sheet_name in REQUIRED_COLUMNS if sheet_name not in sheets]
+    if missing_sheets:
+        found_sheets = "、".join(sheets) if sheets else "なし"
+        raise UserFacingError(
+            "入力Excelファイルのシート名を確認してください。\n"
+            f"足りないシート: {'、'.join(missing_sheets)}\n"
+            f"見つかったシート: {found_sheets}\n"
+            "直し方: Excel下部のシート名を「個人」と「合作」にしてください。余分な文字やスペースも入れないでください。"
+        )
+
+    missing_by_sheet: list[str] = []
+    for sheet_name, required_columns in REQUIRED_COLUMNS.items():
+        headers = sheets[sheet_name].headers
+        missing_columns = [column for column in required_columns if not has_matching_header(headers, column)]
+        if missing_columns:
+            missing_by_sheet.append(f"{sheet_name}シート: {'、'.join(missing_columns)}")
+
+    if missing_by_sheet:
+        raise UserFacingError(
+            "入力Excelファイルの列名を確認してください。\n"
+            + "\n".join(missing_by_sheet)
+            + "\n直し方: 1行目の列名をフォームの元の名前に戻してください。説明文が後ろに続くのは問題ありません。"
+        )
+
+    if all(not sheets[sheet_name].rows for sheet_name in REQUIRED_COLUMNS):
+        raise UserFacingError(
+            "入力Excelファイルに作品データがありません。\n"
+            "直し方: 1行目は列名のままにして、2行目以降に作品情報を入力してください。"
+        )
+
+
+def has_matching_header(headers: list[str], starts_with: str) -> bool:
+    return any(header.replace("\n", " ").strip().startswith(starts_with) for header in headers)
 
 
 def value_by_header(row: dict[str, str], starts_with: str) -> str:
@@ -309,11 +410,36 @@ def write_docx(works: list[Work], path: Path) -> None:
 def write_template_docx(works: list[Work], template_path: Path, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(template_path) as template:
-        document_root = ET.fromstring(template.read("word/document.xml"))
+    try:
+        template = zipfile.ZipFile(template_path)
+    except FileNotFoundError as exc:
+        raise UserFacingError(
+            f"テンプレートのWordファイルが見つかりません。\n"
+            f"確認する場所: {template_path}\n"
+            "直し方: templates フォルダに パンフ鋳型.docx を置いてから、もう一度実行してください。"
+        ) from exc
+    except zipfile.BadZipFile as exc:
+        raise UserFacingError(
+            f"テンプレートのWordファイルを開けませんでした。\n"
+            f"ファイル: {template_path}\n"
+            "直し方: Wordで開ける .docx ファイルか確認してください。古い .doc 形式や、壊れたファイルは使えません。"
+        ) from exc
+
+    with template:
+        try:
+            document_root = ET.fromstring(template.read("word/document.xml"))
+        except KeyError as exc:
+            raise UserFacingError(
+                f"テンプレートのWordファイルの中身を読み取れませんでした。\n"
+                f"ファイル: {template_path}\n"
+                "直し方: Wordで開いて、別名で .docx として保存し直してから、もう一度実行してください。"
+            ) from exc
         body = document_root.find("w:body", WORD_NS)
         if body is None:
-            raise SystemExit("テンプレートの word/document.xml に本文が見つかりません。")
+            raise UserFacingError(
+                "テンプレートのWordファイルに本文が見つかりません。\n"
+                "直し方: templates フォルダの パンフ鋳型.docx が、前回パンフレットのWordファイルか確認してください。"
+            )
         remove_ignorable_namespace_hint(document_root)
 
         children = list(body)
@@ -331,7 +457,10 @@ def write_template_docx(works: list[Work], template_path: Path, output_path: Pat
         detail_section_end_template = find_vertical_section_end_template(children, detail_start, roster_start)
         detail_templates = children[218:225]
         if len(detail_templates) < 7:
-            raise SystemExit("作品詳細ブロックのテンプレート取得に失敗しました。")
+            raise UserFacingError(
+                "テンプレートから作品詳細ページの書式を読み取れませんでした。\n"
+                "直し方: templates フォルダの パンフ鋳型.docx を、前回パンフレットの元ファイルに戻してください。"
+            )
 
         new_children: list[ET.Element] = []
         new_children.extend(copy.deepcopy(child) for child in children[:list_start])
@@ -392,7 +521,10 @@ def find_vertical_section_end_template(children: list[ET.Element], start: int, e
             if cols is not None and cols.attrib.get(f"{{{W_NS}}}num") == "2":
                 candidate = child
     if candidate is None:
-        raise SystemExit("作品詳細末尾の縦書きセクション設定が見つかりません。")
+        raise UserFacingError(
+            "テンプレートの作品詳細ページの区切りを見つけられませんでした。\n"
+            "直し方: templates フォルダの パンフ鋳型.docx を、前回パンフレットの元ファイルに戻してください。"
+        )
     return candidate
 
 
@@ -554,21 +686,32 @@ def find_child_index_by_text(children: list[ET.Element], text: str, start: int =
     for index, child in enumerate(children[start:], start=start):
         if paragraph_text(child) == text:
             return index
-    raise SystemExit(f"テンプレート内に {text!r} が見つかりません。")
+    raise UserFacingError(
+        "テンプレートに必要な見出しが見つかりません。\n"
+        f"見つからない文字: {text}\n"
+        "直し方: templates フォルダの パンフ鋳型.docx が、前回パンフレットのWordファイルか確認してください。"
+    )
 
 
 def find_child_index_by_text_contains(children: list[ET.Element], text: str, start: int = 0) -> int:
     for index, child in enumerate(children[start:], start=start):
         if text in paragraph_text(child):
             return index
-    raise SystemExit(f"テンプレート内に {text!r} を含む段落が見つかりません。")
+    raise UserFacingError(
+        "テンプレートに必要な行が見つかりません。\n"
+        f"見つからない文字: {text}\n"
+        "直し方: templates フォルダの パンフ鋳型.docx が、前回パンフレットのWordファイルか確認してください。"
+    )
 
 
 def find_vertical_detail_start(children: list[ET.Element], list_start: int) -> int:
     for index in range(list_start + 1, len(children)):
         if paragraph_text(children[index]) == "賛助作品" and any(has_section_break(child) for child in children[list_start:index]):
             return index
-    raise SystemExit("作品詳細セクションの開始位置が見つかりません。")
+    raise UserFacingError(
+        "テンプレートの作品詳細ページを見つけられませんでした。\n"
+        "直し方: templates フォルダの パンフ鋳型.docx を、前回パンフレットの元ファイルに戻してください。"
+    )
 
 
 def find_previous_section_break(children: list[ET.Element], before: int) -> int:
@@ -683,7 +826,10 @@ def main() -> None:
     sheets = read_xlsx(args.input)
     works = build_works(sheets)
     if not works:
-        raise SystemExit("作品データが見つかりませんでした。")
+        raise UserFacingError(
+            "入力Excelファイルに作品データがありません。\n"
+            "直し方: 1行目は列名のままにして、2行目以降に作品情報を入力してください。"
+        )
 
     write_list_text(works, args.list)
     write_template_docx(works, args.template, args.docx)
@@ -701,6 +847,37 @@ def main() -> None:
         print("\n確認事項:")
         for warning in warnings:
             print(f"- {warning}")
+
+
+def run() -> None:
+    try:
+        main()
+    except UserFacingError as exc:
+        raise SystemExit(f"\n[ERROR] {exc}") from exc
+    except PermissionError as exc:
+        path = os.fspath(exc.filename) if exc.filename else "出力先または入力ファイル"
+        raise SystemExit(
+            "\n[ERROR] ファイルを開けませんでした。\n"
+            f"対象: {path}\n"
+            "直し方: Word や Excel でファイルを開いている場合は閉じてから、もう一度実行してください。"
+        ) from exc
+    except ET.ParseError as exc:
+        raise SystemExit(
+            "\n[ERROR] ファイルの中身を読み取れませんでした。\n"
+            "直し方: 入力ExcelとテンプレートWordをそれぞれ開き、別名で保存し直してから、もう一度実行してください。"
+        ) from exc
+    except zipfile.BadZipFile as exc:
+        raise SystemExit(
+            "\n[ERROR] ファイルを開けませんでした。\n"
+            "直し方: 入力ExcelとテンプレートWordが、それぞれ .xlsx と .docx の正しいファイルか確認してください。"
+        ) from exc
+    except OSError as exc:
+        path = os.fspath(exc.filename) if exc.filename else "ファイル"
+        raise SystemExit(
+            "\n[ERROR] ファイルの読み書きに失敗しました。\n"
+            f"対象: {path}\n"
+            "直し方: ファイルの場所やアクセス権を確認し、Word や Excel で開いている場合は閉じてください。"
+        ) from exc
 
 
 CONTENT_TYPES_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -791,4 +968,4 @@ STYLES_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 
 
 if __name__ == "__main__":
-    main()
+    run()
