@@ -78,8 +78,7 @@ function App() {
     <div className="layout">
       <main className="page">
         <header className="header">
-          <p className="headerLabel">京大書道部</p>
-          <h1>パンフレット生成</h1>
+          <h1>京大書道部パンフレット生成</h1>
           <p className="headerLead">
             作品情報フォームをアップロードすると、作品一覧と作品紹介ページを流し込んだ Word ファイルを生成します。
             パンフ鋳型を指定しない場合は、既定のパンフ鋳型を使います。
