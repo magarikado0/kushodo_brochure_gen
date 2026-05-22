@@ -15,9 +15,15 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 
-APP_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = APP_ROOT.parents[1]
-GENERATOR_PATH = Path(os.environ.get("KUSHODO_GENERATOR_PATH", REPO_ROOT / "tools" / "generate.py"))
+def default_generator_path() -> Path:
+    """Docker では KUSHODO_GENERATOR_PATH を使う。ローカルは webapp/backend/app から3階層上がリポジトリルート。"""
+    source = Path(__file__).resolve()
+    if len(source.parents) > 3:
+        return source.parents[3] / "tools" / "generate.py"
+    return Path("/repo/tools/generate.py")
+
+
+GENERATOR_PATH = Path(os.environ.get("KUSHODO_GENERATOR_PATH", default_generator_path()))
 MAX_UPLOAD_BYTES = 40 * 1024 * 1024
 
 app = FastAPI(title="京大書道部パンフレット生成 API")
