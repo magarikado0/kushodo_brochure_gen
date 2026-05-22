@@ -14,8 +14,8 @@ if [ ! -f "input/作品情報フォーム.xlsx" ]; then
   exit 1
 fi
 
-if [ ! -f "templates/冬樟展パンフ.docx" ]; then
-  echo "[ERROR] templates/冬樟展パンフ.docx が見つかりません。"
+if [ ! -f "templates/パンフ鋳型.docx" ]; then
+  echo "[ERROR] templates/パンフ鋳型.docx が見つかりません。"
   echo "templates フォルダに前回パンフレットのdocxを置いてください。"
   echo
   read -r -p "Enterキーで終了します..."

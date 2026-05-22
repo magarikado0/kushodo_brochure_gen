@@ -14,8 +14,8 @@ if not exist "input\作品情報フォーム.xlsx" (
   exit /b 1
 )
 
-if not exist "templates\冬樟展パンフ.docx" (
-  echo [ERROR] templates\冬樟展パンフ.docx が見つかりません。
+if not exist "templates\パンフ鋳型.docx" (
+  echo [ERROR] templates\パンフ鋳型.docx が見つかりません。
   echo templates フォルダに前回パンフレットのdocxを置いてください。
   echo.
   pause

@@ -14,7 +14,7 @@ from xml.sax.saxutils import escape
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = ROOT / "input" / "作品情報フォーム.xlsx"
-DEFAULT_TEMPLATE = ROOT / "templates" / "冬樟展パンフ.docx"
+DEFAULT_TEMPLATE = ROOT / "templates" / "パンフ鋳型.docx"
 DEFAULT_DOCX_OUTPUT = ROOT / "output" / "パンフレット_テンプレ流し込み.docx"
 DEFAULT_LIST_OUTPUT = ROOT / "output" / "作品一覧.txt"
 
