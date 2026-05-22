@@ -1,40 +1,26 @@
 from __future__ import annotations
 
-import importlib.util
 import os
 import shutil
-import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-
-def default_generator_path() -> Path:
-    """Docker では KUSHODO_GENERATOR_PATH を使う。ローカルは webapp/backend/app から3階層上がリポジトリルート。"""
-    source = Path(__file__).resolve()
-    if len(source.parents) > 3:
-        return source.parents[3] / "tools" / "generate.py"
-    return Path("/repo/tools/generate.py")
+from . import generator
 
 
 def default_template_path() -> Path:
-    """Docker では KUSHODO_TEMPLATE_PATH を使う。ローカルは templates/パンフ鋳型.docx。"""
     env_path = os.environ.get("KUSHODO_TEMPLATE_PATH")
     if env_path:
         return Path(env_path)
-    source = Path(__file__).resolve()
-    if len(source.parents) > 3:
-        return source.parents[3] / "templates" / "パンフ鋳型.docx"
-    return Path("/repo/templates/パンフ鋳型.docx")
+    return Path(__file__).resolve().parent / "templates" / "パンフ鋳型.docx"
 
 
-GENERATOR_PATH = Path(os.environ.get("KUSHODO_GENERATOR_PATH", default_generator_path()))
 MAX_UPLOAD_BYTES = 40 * 1024 * 1024
 
 app = FastAPI(title="京大書道部パンフレット生成 API")
@@ -47,30 +33,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-def load_generator() -> Any:
-    spec = importlib.util.spec_from_file_location("kushodo_brochure_generator", GENERATOR_PATH)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("生成エンジンを読み込めませんでした。")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-generator = load_generator()
-
-
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.post("/api/generate")
-async def generate_brochure(
-    form_file: UploadFile = File(...),
-    template_file: UploadFile | None = File(None),
-) -> FileResponse:
+async def generate_brochure(form_file: UploadFile = File(...)) -> FileResponse:
     validate_upload(form_file, ".xlsx", "作品情報フォーム.xlsx")
 
     work_dir = Path(tempfile.mkdtemp(prefix="kushodo-brochure-"))
@@ -80,7 +49,7 @@ async def generate_brochure(
         list_path = work_dir / "作品一覧.txt"
 
         await save_upload(form_file, input_path)
-        template_path = await prepare_template(template_file, work_dir)
+        template_path = prepare_template(work_dir)
 
         sheets = generator.read_xlsx(input_path)
         works = generator.build_works(sheets)
@@ -122,22 +91,11 @@ def validate_upload(upload: UploadFile, extension: str, expected_name: str) -> N
         raise user_error(f"{expected_name} に対応する {extension} ファイルを選択してください。")
 
 
-def template_upload_provided(upload: UploadFile | None) -> bool:
-    return upload is not None and bool(upload.filename)
-
-
-async def prepare_template(template_file: UploadFile | None, work_dir: Path) -> Path:
+def prepare_template(work_dir: Path) -> Path:
     template_path = work_dir / "パンフ鋳型.docx"
-    if template_upload_provided(template_file):
-        validate_upload(template_file, ".docx", "パンフ鋳型.docx")
-        await save_upload(template_file, template_path)
-        return template_path
-
     default_path = default_template_path()
     if not default_path.is_file():
-        raise user_error(
-            "パンフ鋳型が指定されておらず、既定の templates/パンフ鋳型.docx も見つかりません。"
-        )
+        raise user_error("サーバーに同梱されているパンフ鋳型が見つかりません。")
     shutil.copy2(default_path, template_path)
     return template_path
 

@@ -1,23 +1,13 @@
 from __future__ import annotations
 
-import argparse
 import copy
-import os
 import re
-import textwrap
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 from xml.etree import ElementTree as ET
-from xml.sax.saxutils import escape
 
-
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT = ROOT / "input" / "作品情報フォーム.xlsx"
-DEFAULT_TEMPLATE = ROOT / "templates" / "パンフ鋳型.docx"
-DEFAULT_DOCX_OUTPUT = ROOT / "output" / "パンフレット_テンプレ流し込み.docx"
-DEFAULT_LIST_OUTPUT = ROOT / "output" / "作品一覧.txt"
 
 SPREADSHEET_NS = {
     "a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
@@ -395,18 +385,6 @@ def one_line(value: str) -> str:
     return normalize_space(value.replace("\r\n", " ").replace("\n", " "))
 
 
-def write_docx(works: list[Work], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    document_xml = build_document_xml(works)
-
-    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as docx:
-        docx.writestr("[Content_Types].xml", CONTENT_TYPES_XML)
-        docx.writestr("_rels/.rels", ROOT_RELS_XML)
-        docx.writestr("word/_rels/document.xml.rels", DOCUMENT_RELS_XML)
-        docx.writestr("word/styles.xml", STYLES_XML)
-        docx.writestr("word/document.xml", document_xml)
-
-
 def write_template_docx(works: list[Work], template_path: Path, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -416,7 +394,7 @@ def write_template_docx(works: list[Work], template_path: Path, output_path: Pat
         raise UserFacingError(
             f"テンプレートのWordファイルが見つかりません。\n"
             f"確認する場所: {template_path}\n"
-            "直し方: templates フォルダに パンフ鋳型.docx を置いてから、もう一度実行してください。"
+            "直し方: サーバーに同梱されているパンフ鋳型を確認してください。"
         ) from exc
     except zipfile.BadZipFile as exc:
         raise UserFacingError(
@@ -438,7 +416,7 @@ def write_template_docx(works: list[Work], template_path: Path, output_path: Pat
         if body is None:
             raise UserFacingError(
                 "テンプレートのWordファイルに本文が見つかりません。\n"
-                "直し方: templates フォルダの パンフ鋳型.docx が、前回パンフレットのWordファイルか確認してください。"
+                "直し方: パンフ鋳型が、前回パンフレットのWordファイルか確認してください。"
             )
         remove_ignorable_namespace_hint(document_root)
 
@@ -459,7 +437,7 @@ def write_template_docx(works: list[Work], template_path: Path, output_path: Pat
         if len(detail_templates) < 7:
             raise UserFacingError(
                 "テンプレートから作品詳細ページの書式を読み取れませんでした。\n"
-                "直し方: templates フォルダの パンフ鋳型.docx を、前回パンフレットの元ファイルに戻してください。"
+                "直し方: パンフ鋳型を、前回パンフレットの元ファイルに戻してください。"
             )
 
         new_children: list[ET.Element] = []
@@ -523,7 +501,7 @@ def find_vertical_section_end_template(children: list[ET.Element], start: int, e
     if candidate is None:
         raise UserFacingError(
             "テンプレートの作品詳細ページの区切りを見つけられませんでした。\n"
-            "直し方: templates フォルダの パンフ鋳型.docx を、前回パンフレットの元ファイルに戻してください。"
+            "直し方: パンフ鋳型を、前回パンフレットの元ファイルに戻してください。"
         )
     return candidate
 
@@ -689,7 +667,7 @@ def find_child_index_by_text(children: list[ET.Element], text: str, start: int =
     raise UserFacingError(
         "テンプレートに必要な見出しが見つかりません。\n"
         f"見つからない文字: {text}\n"
-        "直し方: templates フォルダの パンフ鋳型.docx が、前回パンフレットのWordファイルか確認してください。"
+        "直し方: パンフ鋳型が、前回パンフレットのWordファイルか確認してください。"
     )
 
 
@@ -700,7 +678,7 @@ def find_child_index_by_text_contains(children: list[ET.Element], text: str, sta
     raise UserFacingError(
         "テンプレートに必要な行が見つかりません。\n"
         f"見つからない文字: {text}\n"
-        "直し方: templates フォルダの パンフ鋳型.docx が、前回パンフレットのWordファイルか確認してください。"
+        "直し方: パンフ鋳型が、前回パンフレットのWordファイルか確認してください。"
     )
 
 
@@ -710,7 +688,7 @@ def find_vertical_detail_start(children: list[ET.Element], list_start: int) -> i
             return index
     raise UserFacingError(
         "テンプレートの作品詳細ページを見つけられませんでした。\n"
-        "直し方: templates フォルダの パンフ鋳型.docx を、前回パンフレットの元ファイルに戻してください。"
+        "直し方: パンフ鋳型を、前回パンフレットの元ファイルに戻してください。"
     )
 
 
@@ -725,247 +703,9 @@ def has_section_break(element: ET.Element) -> bool:
     return element.find("w:pPr/w:sectPr", WORD_NS) is not None
 
 
-def build_document_xml(works: list[Work]) -> str:
-    body: list[str] = []
-    body.append(paragraph("作品一覧", style="Title"))
-    body.append(paragraph("個人作品", style="Heading1"))
-
-    for grade, grade_works in group_personal_by_grade(works).items():
-        body.append(paragraph(grade, style="Heading2"))
-        for work in grade_works:
-            body.append(paragraph(f"{work.number:02d}. {normalize_space(work.name)}　{work.kind}・{work.title}", style="ListLine"))
-
-    collaboration = [work for work in works if work.section == "合作"]
-    if collaboration:
-        body.append(paragraph("合作", style="Heading1"))
-        for work in collaboration:
-            body.append(paragraph(f"{work.number:02d}. {one_line(work.name)}　{work.kind}・{work.title}", style="ListLine"))
-
-    for work in works:
-        body.append(page_break())
-        body.append(paragraph(f"No. {work.number:02d}", style="Heading1"))
-        body.append(paragraph("作品画像：ここに手入力で配置", style="ImagePlaceholder"))
-        body.append(paragraph(display_name(work), style="Heading2"))
-        body.append(paragraph(f"{work.kind}　{work.title}"))
-        body.append(paragraph(f"書体：{work.style}　サイズ：{work.size}　向き：{work.orientation}"))
-        body.append(paragraph(f"展示場所：{work.location}　表装形式：{work.mounting}"))
-        if work.text:
-            body.append(paragraph("釈文", style="Heading3"))
-            body.append(paragraph(work.text))
-        if work.comment:
-            body.append(paragraph("作品コメント", style="Heading3"))
-            body.append(paragraph(work.comment))
-
-    body.append(SECTION_PROPERTIES_XML)
-    return DOCUMENT_XML_TEMPLATE.format(body="".join(body))
-
-
 def display_name(work: Work) -> str:
     if work.section == "合作":
         return one_line(work.name)
     return f"{normalize_space(work.name)}　{work.grade}"
 
 
-def paragraph(text: str, style: str | None = None) -> str:
-    style_xml = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ""
-    runs = "".join(run(part) if index == 0 else '<w:r><w:br/></w:r>' + run(part) for index, part in enumerate(text.splitlines()))
-    return f"<w:p>{style_xml}{runs}</w:p>"
-
-
-def run(text: str) -> str:
-    preserve = ' xml:space="preserve"' if text.startswith(" ") or text.endswith(" ") else ""
-    return f"<w:r><w:t{preserve}>{escape(text)}</w:t></w:r>"
-
-
-def page_break() -> str:
-    return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
-
-
-def validate_works(works: list[Work]) -> list[str]:
-    warnings: list[str] = []
-    for work in works:
-        missing = []
-        for label, value in [
-            ("作者", work.name),
-            ("臨書 or 創作", work.kind),
-            ("作品名", work.title),
-            ("作品サイズ", work.size),
-            ("釈文", work.text),
-            ("作品コメント", work.comment),
-        ]:
-            if not value:
-                missing.append(label)
-        if missing:
-            warnings.append(f"No.{work.number:02d} {display_name(work)}: {', '.join(missing)} が空です")
-    return warnings
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="作品情報フォーム.xlsx からパンフレットを生成します。",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=textwrap.dedent(
-            """\
-            例:
-              python scripts/generate.py
-              python scripts/generate.py --input 作品情報フォーム.xlsx --docx output/パンフレット.docx
-              python scripts/generate.py --plain-docx output/簡易版.docx
-            """
-        ),
-    )
-    parser.add_argument("--input", type=Path, default=DEFAULT_INPUT, help="入力する xlsx ファイル")
-    parser.add_argument("--docx", type=Path, default=DEFAULT_DOCX_OUTPUT, help="出力する docx ファイル")
-    parser.add_argument("--list", type=Path, default=DEFAULT_LIST_OUTPUT, help="確認用の作品一覧テキスト")
-    parser.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE, help="書式をコピーする前回パンフレット docx")
-    parser.add_argument("--plain-docx", type=Path, help="テンプレートを使わない簡易版 docx も出力する場合の出力先")
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-    sheets = read_xlsx(args.input)
-    works = build_works(sheets)
-    if not works:
-        raise UserFacingError(
-            "入力Excelファイルに作品データがありません。\n"
-            "直し方: 1行目は列名のままにして、2行目以降に作品情報を入力してください。"
-        )
-
-    write_list_text(works, args.list)
-    write_template_docx(works, args.template, args.docx)
-    if args.plain_docx:
-        write_docx(works, args.plain_docx)
-
-    print(f"作品数: {len(works)}")
-    print(f"docx: {args.docx}")
-    print(f"list: {args.list}")
-    if args.plain_docx:
-        print(f"plain docx: {args.plain_docx}")
-
-    warnings = validate_works(works)
-    if warnings:
-        print("\n確認事項:")
-        for warning in warnings:
-            print(f"- {warning}")
-
-
-def run() -> None:
-    try:
-        main()
-    except UserFacingError as exc:
-        raise SystemExit(f"\n[ERROR] {exc}") from exc
-    except PermissionError as exc:
-        path = os.fspath(exc.filename) if exc.filename else "出力先または入力ファイル"
-        raise SystemExit(
-            "\n[ERROR] ファイルを開けませんでした。\n"
-            f"対象: {path}\n"
-            "直し方: Word や Excel でファイルを開いている場合は閉じてから、もう一度実行してください。"
-        ) from exc
-    except ET.ParseError as exc:
-        raise SystemExit(
-            "\n[ERROR] ファイルの中身を読み取れませんでした。\n"
-            "直し方: 入力ExcelとテンプレートWordをそれぞれ開き、別名で保存し直してから、もう一度実行してください。"
-        ) from exc
-    except zipfile.BadZipFile as exc:
-        raise SystemExit(
-            "\n[ERROR] ファイルを開けませんでした。\n"
-            "直し方: 入力ExcelとテンプレートWordが、それぞれ .xlsx と .docx の正しいファイルか確認してください。"
-        ) from exc
-    except OSError as exc:
-        path = os.fspath(exc.filename) if exc.filename else "ファイル"
-        raise SystemExit(
-            "\n[ERROR] ファイルの読み書きに失敗しました。\n"
-            f"対象: {path}\n"
-            "直し方: ファイルの場所やアクセス権を確認し、Word や Excel で開いている場合は閉じてください。"
-        ) from exc
-
-
-CONTENT_TYPES_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
-</Types>
-"""
-
-ROOT_RELS_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-</Relationships>
-"""
-
-DOCUMENT_RELS_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
-</Relationships>
-"""
-
-DOCUMENT_XML_TEMPLATE = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document
-  xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <w:body>{body}</w:body>
-</w:document>
-"""
-
-SECTION_PROPERTIES_XML = """
-<w:sectPr>
-  <w:pgSz w:w="11906" w:h="16838"/>
-  <w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/>
-</w:sectPr>
-"""
-
-STYLES_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
-    <w:name w:val="Normal"/>
-    <w:rPr>
-      <w:rFonts w:ascii="Yu Mincho" w:hAnsi="Yu Mincho" w:eastAsia="Yu Mincho"/>
-      <w:sz w:val="21"/>
-    </w:rPr>
-  </w:style>
-  <w:style w:type="paragraph" w:styleId="Title">
-    <w:name w:val="Title"/>
-    <w:basedOn w:val="Normal"/>
-    <w:pPr><w:spacing w:after="240"/></w:pPr>
-    <w:rPr><w:b/><w:sz w:val="36"/></w:rPr>
-  </w:style>
-  <w:style w:type="paragraph" w:styleId="Heading1">
-    <w:name w:val="Heading 1"/>
-    <w:basedOn w:val="Normal"/>
-    <w:pPr><w:spacing w:before="240" w:after="120"/></w:pPr>
-    <w:rPr><w:b/><w:sz w:val="28"/></w:rPr>
-  </w:style>
-  <w:style w:type="paragraph" w:styleId="Heading2">
-    <w:name w:val="Heading 2"/>
-    <w:basedOn w:val="Normal"/>
-    <w:pPr><w:spacing w:before="160" w:after="80"/></w:pPr>
-    <w:rPr><w:b/><w:sz w:val="24"/></w:rPr>
-  </w:style>
-  <w:style w:type="paragraph" w:styleId="Heading3">
-    <w:name w:val="Heading 3"/>
-    <w:basedOn w:val="Normal"/>
-    <w:pPr><w:spacing w:before="120" w:after="40"/></w:pPr>
-    <w:rPr><w:b/><w:sz w:val="21"/></w:rPr>
-  </w:style>
-  <w:style w:type="paragraph" w:styleId="ListLine">
-    <w:name w:val="List Line"/>
-    <w:basedOn w:val="Normal"/>
-    <w:pPr><w:spacing w:after="40"/></w:pPr>
-  </w:style>
-  <w:style w:type="paragraph" w:styleId="ImagePlaceholder">
-    <w:name w:val="Image Placeholder"/>
-    <w:basedOn w:val="Normal"/>
-    <w:pPr>
-      <w:spacing w:before="160" w:after="160"/>
-      <w:jc w:val="center"/>
-    </w:pPr>
-    <w:rPr><w:i/><w:color w:val="808080"/><w:sz w:val="24"/></w:rPr>
-  </w:style>
-</w:styles>
-"""
-
-
-if __name__ == "__main__":
-    run()

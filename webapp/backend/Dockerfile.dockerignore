@@ -1,9 +1,0 @@
-.git
-.cursor
-output
-input
-tools/.venv
-webapp/frontend/node_modules
-webapp/frontend/dist
-**/__pycache__
-**/.pytest_cache

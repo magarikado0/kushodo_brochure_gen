@@ -1,7 +1,0 @@
-[project]
-name = "kushodo-brochure-gen"
-version = "0.1.0"
-description = "Generate Kyoto University Calligraphy Club brochure content from an Excel form."
-requires-python = ">=3.11"
-dependencies = []
-

@@ -1,7 +1,8 @@
-output/
 ~$*
-tools/.venv/
-webapp/backend/.venv/
-webapp/frontend/node_modules/
-webapp/frontend/dist/
+.env
+webapp/
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
 **/__pycache__/
