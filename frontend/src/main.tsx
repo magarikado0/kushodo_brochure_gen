@@ -87,7 +87,7 @@ function App() {
         <header className="header">
           <h1>京大書道部パンフレット生成</h1>
           <p className="headerLead">
-            作品情報フォームをアップロードすると、サーバー同梱のパンフ鋳型に作品一覧と作品紹介ページを流し込んだ Word ファイルを生成します。
+            作品情報フォーム（xlsx）をアップロードすると、作品一覧と作品紹介ページを含む Word ファイルを作成できます。
           </p>
         </header>
 
