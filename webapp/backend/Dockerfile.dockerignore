@@ -2,7 +2,6 @@
 .cursor
 output
 input
-templates
 tools/.venv
 webapp/frontend/node_modules
 webapp/frontend/dist

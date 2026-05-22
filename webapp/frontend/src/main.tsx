@@ -13,7 +13,7 @@ function App() {
   const [message, setMessage] = useState<string>("");
   const [error, setError] = useState<string>("");
 
-  const canSubmit = useMemo(() => Boolean(formFile && templateFile && !isGenerating), [formFile, templateFile, isGenerating]);
+  const canSubmit = useMemo(() => Boolean(formFile && !isGenerating), [formFile, isGenerating]);
 
   const updateFile = (kind: UploadKind) => (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -28,8 +28,8 @@ function App() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!formFile || !templateFile) {
-      setError("作品情報フォームとパンフ鋳型の両方を選択してください。");
+    if (!formFile) {
+      setError("作品情報フォームを選択してください。");
       return;
     }
 
@@ -40,7 +40,9 @@ function App() {
     try {
       const body = new FormData();
       body.append("form_file", formFile);
-      body.append("template_file", templateFile);
+      if (templateFile) {
+        body.append("template_file", templateFile);
+      }
 
       const response = await fetch(`${API_BASE}/api/generate`, {
         method: "POST",
@@ -73,47 +75,121 @@ function App() {
   }
 
   return (
-    <main className="page">
-      <section className="hero">
-        <div className="heroText">
-          <p className="eyebrow">Kyodai Calligraphy Brochure</p>
-          <h1>作品情報フォームから、パンフレットを生成します。</h1>
-          <p className="lead">
-            Excel と前回パンフレットの鋳型を選ぶだけで、作品一覧と作品紹介ページを流し込みます。
+    <div className="layout">
+      <main className="page">
+        <header className="header">
+          <p className="headerLabel">京大書道部</p>
+          <h1>パンフレット生成</h1>
+          <p className="headerLead">
+            作品情報フォームをアップロードすると、作品一覧と作品紹介ページを流し込んだ Word ファイルを生成します。
+            パンフ鋳型を指定しない場合は、既定のパンフ鋳型を使います。
           </p>
+        </header>
+
+        <FileRequirements />
+
+        <form className="card" onSubmit={submit}>
+          <div className="cardHeader">
+            <h2>ファイルを選択</h2>
+            <p>上記の要件を満たしたファイルを選んでから、生成ボタンを押してください。パンフ鋳型は任意です。</p>
+          </div>
+
+          <div className="uploadGrid">
+            <FilePicker
+              title="作品情報フォーム"
+              description="Google フォームなどから出力した xlsx"
+              accept=".xlsx"
+              file={formFile}
+              onChange={updateFile("form")}
+            />
+            <FilePicker
+              title="パンフ鋳型（任意）"
+              description="前回パンフレットの docx を指定できます"
+              hint="未選択のときは既定のパンフ鋳型を使用"
+              accept=".docx"
+              file={templateFile}
+              onChange={updateFile("template")}
+            />
+          </div>
+
+          <div className="actions">
+            <button type="submit" className="submitButton" disabled={!canSubmit}>
+              {isGenerating ? "生成中..." : "パンフレットを生成"}
+            </button>
+          </div>
+
+          {message && <p className="feedback message">{message}</p>}
+          {error && <p className="feedback error">{error}</p>}
+        </form>
+
+        <aside className="noteCard">
+          <h2>生成後にすること</h2>
+          <p>作品画像は自動では入りません。Word ファイル内の画像プレースホルダに手で配置してください。</p>
+        </aside>
+      </main>
+    </div>
+  );
+}
+
+function FileRequirements() {
+  return (
+    <section className="requirementsCard">
+      <details className="requirementsToggle">
+        <summary className="requirementsSummary">
+          <span className="requirementsSummaryMain">
+            <span className="requirementsSummaryTitle">ファイルの要件</span>
+            <span className="requirementsSummaryHint">形式が合わないと生成に失敗します</span>
+          </span>
+          <span className="requirementsSummaryAction" aria-hidden="true" />
+        </summary>
+
+        <div className="requirementsContent">
+          <p className="requirementsIntro">アップロード前に、次の形式を満たしているか確認してください。</p>
+          <div className="requirementsGrid">
+            <article className="requirementPanel">
+              <h3>作品情報フォーム（xlsx）</h3>
+              <div className="requirementBody">
+                <p>
+                  <code>個人</code> と <code>合作</code> の2シートが必要です。シート名は変えないでください。
+                  列の順番は変わっても大丈夫ですが、列名の先頭部分は変えないでください。
+                </p>
+                <p>個人シートに必要な列:</p>
+                <p className="requirementColumns">
+                  氏名、ふりがな、学年、臨書 or 創作、書体、作品名、作品の向き、作品サイズ、展示場所、表装形式、釈文、作品コメント
+                </p>
+                <p>合作シートに必要な列:</p>
+                <p className="requirementColumns">
+                  合作参加者全員分、臨書 or 創作、書体、作品名、作品の向き、作品サイズ、展示場所、表装形式、釈文、作品コメント
+                </p>
+                <p>
+                  学年は <code>2回生</code>、<code>B2</code>、<code>修士1回生</code> などに対応しています。
+                  合作参加者は、名前の後ろに学年を付けてください（例: 加藤 杏次郎（B4） 星野 真帆（B4））。
+                </p>
+              </div>
+            </article>
+
+            <article className="requirementPanel">
+              <h3>パンフ鋳型（docx）</h3>
+              <div className="requirementBody">
+                <p>
+                  前回のパンフレットをコピーした Word ファイルを使ってください。完全に新しいファイルではなく、前回版をベースにしてください。
+                  未指定の場合は、既定のパンフ鋳型が使われます。
+                </p>
+                <p>テンプレートには、次の内容が必要です。</p>
+                <ul>
+                  <li>見出し <code>作品一覧</code></li>
+                  <li>見出し <code>個人作品</code></li>
+                  <li>学年見出しの例として <code>一回生</code></li>
+                  <li>作品紹介ページの開始位置として <code>賛助作品</code></li>
+                  <li>作品紹介ページ内の、番号入りテキストボックス</li>
+                  <li>後ろの固定ページの開始位置として <code>【顧問・部員紹介】</code></li>
+                </ul>
+              </div>
+            </article>
+          </div>
         </div>
-        <div className="inkMark" aria-hidden="true">書</div>
-      </section>
-
-      <form className="panel" onSubmit={submit}>
-        <FilePicker
-          title="作品情報フォーム"
-          description="Google フォームなどから出力した xlsx ファイル"
-          accept=".xlsx"
-          file={formFile}
-          onChange={updateFile("form")}
-        />
-        <FilePicker
-          title="パンフ鋳型"
-          description="前回パンフレットをコピーした docx ファイル"
-          accept=".docx"
-          file={templateFile}
-          onChange={updateFile("template")}
-        />
-
-        <button className="generateButton" disabled={!canSubmit}>
-          {isGenerating ? "生成中..." : "パンフレットを生成"}
-        </button>
-
-        {message && <p className="message">{message}</p>}
-        {error && <p className="error">{error}</p>}
-      </form>
-
-      <section className="notes">
-        <h2>生成後にすること</h2>
-        <p>作品画像は自動では入りません。Word ファイル内の画像プレースホルダに手で配置してください。</p>
-      </section>
-    </main>
+      </details>
+    </section>
   );
 }
 
@@ -123,21 +199,23 @@ function FilePicker({
   accept,
   file,
   onChange,
+  hint,
 }: {
   title: string;
   description: string;
   accept: string;
   file: File | null;
   onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  hint?: string;
 }) {
   return (
-    <label className="fileCard">
-      <span className="fileTitle">{title}</span>
-      <span className="fileDescription">{description}</span>
+    <label className={file ? "uploadBox uploadBoxSelected" : "uploadBox"}>
+      <span className="uploadIcon" aria-hidden="true" />
+      <span className="uploadTitle">{title}</span>
+      <span className="uploadDescription">{description}</span>
       <input type="file" accept={accept} onChange={onChange} />
-      <span className={file ? "fileName selected" : "fileName"}>
-        {file ? file.name : "ファイルを選択"}
-      </span>
+      <span className="uploadAction">{file ? file.name : "ファイルを選択"}</span>
+      {hint && !file && <span className="uploadHint">{hint}</span>}
     </label>
   );
 }

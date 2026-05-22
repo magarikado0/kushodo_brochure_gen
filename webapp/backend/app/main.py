@@ -23,6 +23,17 @@ def default_generator_path() -> Path:
     return Path("/repo/tools/generate.py")
 
 
+def default_template_path() -> Path:
+    """Docker では KUSHODO_TEMPLATE_PATH を使う。ローカルは templates/パンフ鋳型.docx。"""
+    env_path = os.environ.get("KUSHODO_TEMPLATE_PATH")
+    if env_path:
+        return Path(env_path)
+    source = Path(__file__).resolve()
+    if len(source.parents) > 3:
+        return source.parents[3] / "templates" / "パンフ鋳型.docx"
+    return Path("/repo/templates/パンフ鋳型.docx")
+
+
 GENERATOR_PATH = Path(os.environ.get("KUSHODO_GENERATOR_PATH", default_generator_path()))
 MAX_UPLOAD_BYTES = 40 * 1024 * 1024
 
@@ -58,20 +69,18 @@ def health() -> dict[str, str]:
 @app.post("/api/generate")
 async def generate_brochure(
     form_file: UploadFile = File(...),
-    template_file: UploadFile = File(...),
+    template_file: UploadFile | None = File(None),
 ) -> FileResponse:
     validate_upload(form_file, ".xlsx", "作品情報フォーム.xlsx")
-    validate_upload(template_file, ".docx", "パンフ鋳型.docx")
 
     work_dir = Path(tempfile.mkdtemp(prefix="kushodo-brochure-"))
     try:
         input_path = work_dir / "作品情報フォーム.xlsx"
-        template_path = work_dir / "パンフ鋳型.docx"
         output_path = work_dir / f"パンフレット_{uuid.uuid4().hex[:8]}.docx"
         list_path = work_dir / "作品一覧.txt"
 
         await save_upload(form_file, input_path)
-        await save_upload(template_file, template_path)
+        template_path = await prepare_template(template_file, work_dir)
 
         sheets = generator.read_xlsx(input_path)
         works = generator.build_works(sheets)
@@ -111,6 +120,26 @@ def validate_upload(upload: UploadFile, extension: str, expected_name: str) -> N
     name = upload.filename or ""
     if not name.lower().endswith(extension):
         raise user_error(f"{expected_name} に対応する {extension} ファイルを選択してください。")
+
+
+def template_upload_provided(upload: UploadFile | None) -> bool:
+    return upload is not None and bool(upload.filename)
+
+
+async def prepare_template(template_file: UploadFile | None, work_dir: Path) -> Path:
+    template_path = work_dir / "パンフ鋳型.docx"
+    if template_upload_provided(template_file):
+        validate_upload(template_file, ".docx", "パンフ鋳型.docx")
+        await save_upload(template_file, template_path)
+        return template_path
+
+    default_path = default_template_path()
+    if not default_path.is_file():
+        raise user_error(
+            "パンフ鋳型が指定されておらず、既定の templates/パンフ鋳型.docx も見つかりません。"
+        )
+    shutil.copy2(default_path, template_path)
+    return template_path
 
 
 async def save_upload(upload: UploadFile, path: Path) -> None:
