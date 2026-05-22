@@ -106,7 +106,7 @@ async def generate_brochure(
         raise
     except generator.UserFacingError as exc:
         shutil.rmtree(work_dir, ignore_errors=True)
-        raise user_error(str(exc)) from exc
+        raise user_error(sanitize_user_message(str(exc))) from exc
     except PermissionError as exc:
         shutil.rmtree(work_dir, ignore_errors=True)
         target = exc.filename or "アップロードされたファイル"
@@ -151,6 +151,18 @@ async def save_upload(upload: UploadFile, path: Path) -> None:
                 raise user_error("アップロードできるファイルサイズは1ファイル40MBまでです。")
             file.write(chunk)
     await upload.close()
+
+
+def sanitize_user_message(message: str) -> str:
+    lines: list[str] = []
+    for line in message.splitlines():
+        if line.startswith(("ファイル:", "確認する場所:")):
+            prefix, _, rest = line.partition(": ")
+            name = Path(rest.strip()).name if rest.strip() else rest.strip()
+            lines.append(f"{prefix}: {name}")
+        else:
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def user_error(message: str) -> HTTPException:

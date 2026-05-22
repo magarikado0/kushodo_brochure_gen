@@ -242,6 +242,22 @@ h2 {
   color: var(--error-text);
 }
 
+.feedback.error p {
+  margin: 0 0 8px;
+  line-height: 1.55;
+}
+
+.feedback.error p:last-child {
+  margin-bottom: 0;
+}
+
+.errorHint {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--error-border);
+  font-weight: 600;
+}
+
 .noteCard {
   margin-top: 20px;
   padding: 20px 24px;
@@ -339,8 +355,8 @@ h2 {
 
 .requirementsGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: 1fr;
+  gap: 16px;
 }
 
 .requirementPanel {
@@ -404,8 +420,7 @@ h2 {
     padding: 20px;
   }
 
-  .uploadGrid,
-  .requirementsGrid {
+  .uploadGrid {
     grid-template-columns: 1fr;
   }
 

@@ -118,7 +118,7 @@ function App() {
           </div>
 
           {message && <p className="feedback message">{message}</p>}
-          {error && <p className="feedback error">{error}</p>}
+          {error && <ErrorFeedback message={error} />}
         </form>
 
         <aside className="noteCard">
@@ -219,10 +219,45 @@ function FilePicker({
   );
 }
 
+function ErrorFeedback({ message }: { message: string }) {
+  const lines = message.split("\n").map((line) => line.trimEnd()).filter((line) => line.length > 0);
+
+  return (
+    <div className="feedback error" role="alert">
+      {lines.map((line, index) => (
+        <p key={index} className={line.startsWith("直し方:") ? "errorHint" : undefined}>
+          {line}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function formatApiErrorDetail(detail: unknown): string {
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => {
+        if (typeof item === "string") {
+          return item;
+        }
+        if (item && typeof item === "object" && "msg" in item) {
+          return String(item.msg);
+        }
+        return null;
+      })
+      .filter((item): item is string => Boolean(item));
+    return messages.length > 0 ? messages.join("\n") : "生成に失敗しました。";
+  }
+  return "生成に失敗しました。";
+}
+
 async function readError(response: Response): Promise<string> {
   try {
     const data = await response.json();
-    return typeof data.detail === "string" ? data.detail : "生成に失敗しました。";
+    return formatApiErrorDetail(data.detail);
   } catch {
     return "生成に失敗しました。";
   }
