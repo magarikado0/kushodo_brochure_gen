@@ -31,7 +31,7 @@ fi
 
 echo
 echo "パンフレットを生成します。"
-uv run python scripts/generate.py
+uv run --project tools python tools/generate.py
 
 echo
 echo "完了しました。output フォルダを確認してください。"

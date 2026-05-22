@@ -38,7 +38,7 @@ if errorlevel 1 (
 
 echo.
 echo パンフレットを生成します。
-uv run python scripts\generate.py
+uv run --project tools python tools\generate.py
 
 if errorlevel 1 (
   echo.
