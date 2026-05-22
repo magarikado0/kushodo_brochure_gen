@@ -158,8 +158,47 @@ def grade_sort_key(grade: str) -> tuple[int, int, str]:
 
 
 def kanji_number(value: str) -> int:
-    table = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6}
+    table = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
     return table.get(value, int(value) if value.isdigit() else 99)
+
+
+def number_to_kanji(value: str) -> str:
+    table = {
+        "1": "一",
+        "2": "二",
+        "3": "三",
+        "4": "四",
+        "5": "五",
+        "6": "六",
+        "7": "七",
+        "8": "八",
+        "9": "九",
+        "10": "十",
+    }
+    return table.get(value, value)
+
+
+def display_grade(grade: str) -> str:
+    text = compact_for_sort(grade)
+    if match := re.fullmatch(r"B(\d+)", text, re.IGNORECASE):
+        return f"{number_to_kanji(match.group(1))}回生"
+    if match := re.fullmatch(r"M(\d+)", text, re.IGNORECASE):
+        return f"修士{number_to_kanji(match.group(1))}回生"
+    if match := re.fullmatch(r"D(\d+)", text, re.IGNORECASE):
+        return f"博士{number_to_kanji(match.group(1))}回生"
+    text = re.sub(r"修士(\d+)回生", lambda m: f"修士{number_to_kanji(m.group(1))}回生", text)
+    text = re.sub(r"博士(\d+)回生", lambda m: f"博士{number_to_kanji(m.group(1))}回生", text)
+    text = re.sub(r"(?<!士)(\d+)回生", lambda m: f"{number_to_kanji(m.group(1))}回生", text)
+    return text or grade
+
+
+def display_participant_grades(value: str) -> str:
+    text = value.strip()
+    text = re.sub(r"（B(\d+)）", lambda m: f"（{number_to_kanji(m.group(1))}回生）", text, flags=re.IGNORECASE)
+    text = re.sub(r"（M(\d+)）", lambda m: f"（修士{number_to_kanji(m.group(1))}回生）", text, flags=re.IGNORECASE)
+    text = re.sub(r"（D(\d+)）", lambda m: f"（博士{number_to_kanji(m.group(1))}回生）", text, flags=re.IGNORECASE)
+    text = re.sub(r"（(\d+)回生）", lambda m: f"（{number_to_kanji(m.group(1))}回生）", text)
+    return text
 
 
 def build_works(sheets: dict[str, list[dict[str, str]]]) -> list[Work]:
@@ -173,7 +212,7 @@ def build_works(sheets: dict[str, list[dict[str, str]]]) -> list[Work]:
                 "section": "個人作品",
                 "name": value_by_header(row, "氏名"),
                 "kana": value_by_header(row, "ふりがな"),
-                "grade": value_by_header(row, "学年"),
+                "grade": display_grade(value_by_header(row, "学年")),
                 "kind": value_by_header(row, "臨書 or 創作"),
                 "style": value_by_header(row, "書体"),
                 "title": value_by_header(row, "作品名"),
@@ -194,7 +233,7 @@ def build_works(sheets: dict[str, list[dict[str, str]]]) -> list[Work]:
         collaboration_works.append(
             {
                 "section": "合作",
-                "name": value_by_header(row, "合作参加者全員分"),
+                "name": display_participant_grades(value_by_header(row, "合作参加者全員分")),
                 "kana": "",
                 "grade": "合作",
                 "kind": value_by_header(row, "臨書 or 創作"),
@@ -378,13 +417,13 @@ def build_template_list_elements(
     for grade, grade_works in group_personal_by_grade(works).items():
         elements.append(clone_paragraph_with_text(grade_template, grade))
         for work in grade_works:
-            elements.append(clone_paragraph_with_text(item_template, list_line_for_template(work)))
+            elements.append(clone_paragraph_with_text(item_template, list_line_for_template(work), vertical_last_number=True))
 
     collaboration = [work for work in works if work.section == "合作"]
     if collaboration:
         elements.append(clone_paragraph_with_text(section_template, "合作"))
         for work in collaboration:
-            elements.append(clone_paragraph_with_text(item_template, list_line_for_template(work)))
+            elements.append(clone_paragraph_with_text(item_template, list_line_for_template(work), vertical_last_number=True))
     return elements
 
 
@@ -394,7 +433,7 @@ def build_template_detail_elements(works: list[Work], templates: list[ET.Element
         elements.append(clone_paragraph_with_text(templates[0], display_name(work)))
         elements.append(clone_paragraph_with_text(templates[1], f"{work.kind}　{work.title}　{work.size}"))
         elements.append(clone_paragraph_with_text(templates[2], ""))
-        elements.append(clone_paragraph_with_text(templates[3], quoted_text(work.text)))
+        elements.append(clone_indexed_text_paragraph(templates[3], work.number, quoted_text(work.text)))
         elements.append(clone_paragraph_with_text(templates[4], work.comment))
         elements.append(clone_paragraph_with_text(templates[5], "【作品画像：ここに手入力で配置】"))
         elements.append(clone_paragraph_with_text(templates[6], ""))
@@ -416,7 +455,7 @@ def quoted_text(text: str) -> str:
     return f"「{stripped}」"
 
 
-def clone_paragraph_with_text(template: ET.Element, text: str) -> ET.Element:
+def clone_paragraph_with_text(template: ET.Element, text: str, vertical_last_number: bool = False) -> ET.Element:
     paragraph_element = f"{{{W_NS}}}p"
     run_element = f"{{{W_NS}}}r"
     text_element = f"{{{W_NS}}}t"
@@ -452,11 +491,59 @@ def clone_paragraph_with_text(template: ET.Element, text: str) -> ET.Element:
                 run = ET.SubElement(paragraph, run_element)
                 if run_properties is not None:
                     run.append(copy.deepcopy(run_properties))
+                if vertical_last_number and part_index == len(parts) - 1 and part.isdigit():
+                    rpr = run.find("w:rPr", WORD_NS)
+                    if rpr is None:
+                        rpr = ET.Element(f"{{{W_NS}}}rPr")
+                        run.insert(0, rpr)
+                    east_asian_layout = ET.SubElement(rpr, f"{{{W_NS}}}eastAsianLayout")
+                    east_asian_layout.attrib[f"{{{W_NS}}}vert"] = "1"
+                    east_asian_layout.attrib[f"{{{W_NS}}}vertCompress"] = "1"
                 text_node = ET.SubElement(run, text_element)
                 if part.startswith(" ") or part.endswith(" "):
                     text_node.attrib["{http://www.w3.org/XML/1998/namespace}space"] = "preserve"
                 text_node.text = part
     return paragraph
+
+
+def clone_indexed_text_paragraph(template: ET.Element, number: int, text: str) -> ET.Element:
+    paragraph = copy.deepcopy(template)
+    strip_generated_id_attrs(paragraph)
+    update_drawing_ids(paragraph, number)
+
+    text_nodes = paragraph.findall(".//w:t", WORD_NS)
+    if not text_nodes:
+        return clone_paragraph_with_text(template, text)
+
+    text_nodes[0].text = str(number)
+    for node in text_nodes[1:]:
+        node.text = ""
+    text_nodes[-1].text = text
+
+    return paragraph
+
+
+def strip_generated_id_attrs(element: ET.Element) -> None:
+    for node in element.iter():
+        for attr in list(node.attrib):
+            local_name = attr.rsplit("}", 1)[-1]
+            if local_name in {"paraId", "textId", "rsidR", "rsidRPr", "rsidRDefault", "rsidP"}:
+                node.attrib.pop(attr, None)
+
+
+def update_drawing_ids(element: ET.Element, number: int) -> None:
+    base_id = 900000 + number
+    for node in element.iter():
+        local_name = node.tag.rsplit("}", 1)[-1]
+        if local_name in {"docPr", "cNvPr"} and "id" in node.attrib:
+            node.attrib["id"] = str(base_id)
+        if local_name == "docPr" and "name" in node.attrib:
+            node.attrib["name"] = f"作品番号 {number}"
+        for attr in list(node.attrib):
+            if attr.rsplit("}", 1)[-1] in {"anchorId", "editId"}:
+                node.attrib[attr] = f"{base_id:08X}"[-8:]
+            if attr == "id" and str(node.attrib[attr]).startswith("_x0000_s"):
+                node.attrib[attr] = f"_x0000_s{base_id}"
 
 
 def paragraph_text(element: ET.Element) -> str:
