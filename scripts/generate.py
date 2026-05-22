@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import re
 import textwrap
 import zipfile
@@ -13,13 +14,38 @@ from xml.sax.saxutils import escape
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = ROOT / "作品情報フォーム.xlsx"
-DEFAULT_DOCX_OUTPUT = ROOT / "output" / "パンフレット可変部分.docx"
+DEFAULT_TEMPLATE = ROOT / "冬樟展パンフ.docx"
+DEFAULT_DOCX_OUTPUT = ROOT / "output" / "パンフレット_テンプレ流し込み.docx"
 DEFAULT_LIST_OUTPUT = ROOT / "output" / "作品一覧.txt"
 
 SPREADSHEET_NS = {
     "a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
     "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
 }
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+WORD_NS = {"w": W_NS}
+MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+
+ET.register_namespace("w", W_NS)
+ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
+ET.register_namespace("wp", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing")
+ET.register_namespace("a", "http://schemas.openxmlformats.org/drawingml/2006/main")
+ET.register_namespace("mc", MC_NS)
+ET.register_namespace("w14", "http://schemas.microsoft.com/office/word/2010/wordml")
+ET.register_namespace("w15", "http://schemas.microsoft.com/office/word/2012/wordml")
+ET.register_namespace("w16", "http://schemas.microsoft.com/office/word/2018/wordml")
+ET.register_namespace("w16cex", "http://schemas.microsoft.com/office/word/2018/wordml/cex")
+ET.register_namespace("w16cid", "http://schemas.microsoft.com/office/word/2016/wordml/cid")
+ET.register_namespace("w16du", "http://schemas.microsoft.com/office/word/2023/wordml/word16du")
+ET.register_namespace("w16sdtdh", "http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash")
+ET.register_namespace("w16se", "http://schemas.microsoft.com/office/word/2015/wordml/symex")
+ET.register_namespace("wp14", "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing")
+ET.register_namespace("wps", "http://schemas.microsoft.com/office/word/2010/wordprocessingShape")
+ET.register_namespace("wpg", "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup")
+ET.register_namespace("pic", "http://schemas.openxmlformats.org/drawingml/2006/picture")
+ET.register_namespace("a14", "http://schemas.microsoft.com/office/drawing/2010/main")
+ET.register_namespace("v", "urn:schemas-microsoft-com:vml")
+ET.register_namespace("o", "urn:schemas-microsoft-com:office:office")
 
 
 @dataclass(frozen=True)
@@ -241,6 +267,234 @@ def write_docx(works: list[Work], path: Path) -> None:
         docx.writestr("word/document.xml", document_xml)
 
 
+def write_template_docx(works: list[Work], template_path: Path, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(template_path) as template:
+        document_root = ET.fromstring(template.read("word/document.xml"))
+        body = document_root.find("w:body", WORD_NS)
+        if body is None:
+            raise SystemExit("テンプレートの word/document.xml に本文が見つかりません。")
+        remove_ignorable_namespace_hint(document_root)
+
+        children = list(body)
+        list_start = find_child_index_by_text(children, "作品一覧")
+        detail_start = find_vertical_detail_start(children, list_start)
+        roster_start = find_child_index_by_text(children, "【顧問・部員紹介】", start=detail_start)
+        detail_end = find_previous_section_break(children, roster_start)
+
+        list_title_template = children[list_start]
+        list_section_template = children[find_child_index_by_text(children, "個人作品", start=list_start)]
+        list_grade_template = children[find_child_index_by_text(children, "一回生", start=list_start)]
+        list_item_template = children[find_child_index_by_text_contains(children, "創作・", start=list_start)]
+        vertical_transition = [copy.deepcopy(child) for child in children[detail_start - 3 : detail_start]]
+        force_vertical_two_columns(vertical_transition)
+        detail_section_end_template = find_vertical_section_end_template(children, detail_start, roster_start)
+        detail_templates = children[218:225]
+        if len(detail_templates) < 7:
+            raise SystemExit("作品詳細ブロックのテンプレート取得に失敗しました。")
+
+        new_children: list[ET.Element] = []
+        new_children.extend(copy.deepcopy(child) for child in children[:list_start])
+        new_children.extend(build_template_list_elements(works, list_title_template, list_section_template, list_grade_template, list_item_template))
+        new_children.extend(vertical_transition)
+        new_children.extend(build_template_detail_elements(works, detail_templates))
+        new_children.append(clone_section_break(detail_section_end_template))
+        new_children.extend(copy.deepcopy(child) for child in children[detail_end:])
+
+        for child in list(body):
+            body.remove(child)
+        for child in new_children:
+            body.append(child)
+
+        document_xml = ET.tostring(document_root, encoding="utf-8", xml_declaration=True, short_empty_elements=True)
+
+        with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as output:
+            for item in template.infolist():
+                if item.filename == "word/document.xml":
+                    output.writestr(item, document_xml)
+                else:
+                    output.writestr(item, template.read(item.filename))
+
+
+def remove_ignorable_namespace_hint(document_root: ET.Element) -> None:
+    # ElementTree may rewrite prefixes (for example w14 -> ns2). If mc:Ignorable
+    # still refers to the original prefixes, Word treats the file as repairable.
+    document_root.attrib.pop(f"{{{MC_NS}}}Ignorable", None)
+
+
+def force_vertical_two_columns(elements: list[ET.Element]) -> None:
+    for element in elements:
+        section = element.find("w:pPr/w:sectPr", WORD_NS)
+        if section is None:
+            continue
+        cols = section.find("w:cols", WORD_NS)
+        if cols is None:
+            cols = ET.SubElement(section, f"{{{W_NS}}}cols")
+        cols.attrib[f"{{{W_NS}}}num"] = "2"
+        cols.attrib.setdefault(f"{{{W_NS}}}space", "720")
+
+        text_direction = section.find("w:textDirection", WORD_NS)
+        if text_direction is None:
+            text_direction = ET.SubElement(section, f"{{{W_NS}}}textDirection")
+        text_direction.attrib[f"{{{W_NS}}}val"] = "tbRl"
+        return
+
+
+def find_vertical_section_end_template(children: list[ET.Element], start: int, end: int) -> ET.Element:
+    candidate: ET.Element | None = None
+    for child in children[start:end]:
+        section = child.find("w:pPr/w:sectPr", WORD_NS)
+        if section is None:
+            continue
+        text_direction = section.find("w:textDirection", WORD_NS)
+        cols = section.find("w:cols", WORD_NS)
+        if text_direction is not None and text_direction.attrib.get(f"{{{W_NS}}}val") == "tbRl":
+            if cols is not None and cols.attrib.get(f"{{{W_NS}}}num") == "2":
+                candidate = child
+    if candidate is None:
+        raise SystemExit("作品詳細末尾の縦書きセクション設定が見つかりません。")
+    return candidate
+
+
+def clone_section_break(template: ET.Element) -> ET.Element:
+    paragraph = ET.Element(f"{{{W_NS}}}p")
+    ppr = template.find("w:pPr", WORD_NS)
+    if ppr is not None:
+        paragraph.append(copy.deepcopy(ppr))
+    return paragraph
+
+
+def build_template_list_elements(
+    works: list[Work],
+    title_template: ET.Element,
+    section_template: ET.Element,
+    grade_template: ET.Element,
+    item_template: ET.Element,
+) -> list[ET.Element]:
+    elements: list[ET.Element] = [clone_paragraph_with_text(title_template, "作品一覧")]
+    elements.append(clone_paragraph_with_text(section_template, "個人作品"))
+
+    for grade, grade_works in group_personal_by_grade(works).items():
+        elements.append(clone_paragraph_with_text(grade_template, grade))
+        for work in grade_works:
+            elements.append(clone_paragraph_with_text(item_template, list_line_for_template(work)))
+
+    collaboration = [work for work in works if work.section == "合作"]
+    if collaboration:
+        elements.append(clone_paragraph_with_text(section_template, "合作"))
+        for work in collaboration:
+            elements.append(clone_paragraph_with_text(item_template, list_line_for_template(work)))
+    return elements
+
+
+def build_template_detail_elements(works: list[Work], templates: list[ET.Element]) -> list[ET.Element]:
+    elements: list[ET.Element] = []
+    for work in works:
+        elements.append(clone_paragraph_with_text(templates[0], display_name(work)))
+        elements.append(clone_paragraph_with_text(templates[1], f"{work.kind}　{work.title}　{work.size}"))
+        elements.append(clone_paragraph_with_text(templates[2], ""))
+        elements.append(clone_paragraph_with_text(templates[3], quoted_text(work.text)))
+        elements.append(clone_paragraph_with_text(templates[4], work.comment))
+        elements.append(clone_paragraph_with_text(templates[5], "【作品画像：ここに手入力で配置】"))
+        elements.append(clone_paragraph_with_text(templates[6], ""))
+    return elements
+
+
+def list_line_for_template(work: Work) -> str:
+    page_hint = 11 + work.number - 1
+    name = one_line(work.name) if work.section == "合作" else compact_for_sort(work.name)
+    return f"{name}\t{work.kind}・{work.title}\t{page_hint}"
+
+
+def quoted_text(text: str) -> str:
+    if not text:
+        return ""
+    stripped = text.strip()
+    if stripped.startswith("「") and stripped.endswith("」"):
+        return stripped
+    return f"「{stripped}」"
+
+
+def clone_paragraph_with_text(template: ET.Element, text: str) -> ET.Element:
+    paragraph_element = f"{{{W_NS}}}p"
+    run_element = f"{{{W_NS}}}r"
+    text_element = f"{{{W_NS}}}t"
+    break_element = f"{{{W_NS}}}br"
+    tab_element = f"{{{W_NS}}}tab"
+
+    # Do not copy paragraph IDs such as w14:paraId. Duplicating them across
+    # generated paragraphs can make Word treat the document as repairable.
+    paragraph = ET.Element(paragraph_element)
+    ppr = template.find("w:pPr", WORD_NS)
+    if ppr is not None:
+        paragraph.append(copy.deepcopy(ppr))
+
+    run_template = template.find(".//w:r", WORD_NS)
+    run_properties = run_template.find("w:rPr", WORD_NS) if run_template is not None else None
+
+    lines = text.splitlines() or [""]
+    for index, line in enumerate(lines):
+        if index:
+            run = ET.SubElement(paragraph, run_element)
+            if run_properties is not None:
+                run.append(copy.deepcopy(run_properties))
+            ET.SubElement(run, break_element)
+
+        parts = line.split("\t")
+        for part_index, part in enumerate(parts):
+            if part_index:
+                run = ET.SubElement(paragraph, run_element)
+                if run_properties is not None:
+                    run.append(copy.deepcopy(run_properties))
+                ET.SubElement(run, tab_element)
+            if part:
+                run = ET.SubElement(paragraph, run_element)
+                if run_properties is not None:
+                    run.append(copy.deepcopy(run_properties))
+                text_node = ET.SubElement(run, text_element)
+                if part.startswith(" ") or part.endswith(" "):
+                    text_node.attrib["{http://www.w3.org/XML/1998/namespace}space"] = "preserve"
+                text_node.text = part
+    return paragraph
+
+
+def paragraph_text(element: ET.Element) -> str:
+    return "".join(text.text or "" for text in element.findall(".//w:t", WORD_NS)).strip()
+
+
+def find_child_index_by_text(children: list[ET.Element], text: str, start: int = 0) -> int:
+    for index, child in enumerate(children[start:], start=start):
+        if paragraph_text(child) == text:
+            return index
+    raise SystemExit(f"テンプレート内に {text!r} が見つかりません。")
+
+
+def find_child_index_by_text_contains(children: list[ET.Element], text: str, start: int = 0) -> int:
+    for index, child in enumerate(children[start:], start=start):
+        if text in paragraph_text(child):
+            return index
+    raise SystemExit(f"テンプレート内に {text!r} を含む段落が見つかりません。")
+
+
+def find_vertical_detail_start(children: list[ET.Element], list_start: int) -> int:
+    for index in range(list_start + 1, len(children)):
+        if paragraph_text(children[index]) == "賛助作品" and any(has_section_break(child) for child in children[list_start:index]):
+            return index
+    raise SystemExit("作品詳細セクションの開始位置が見つかりません。")
+
+
+def find_previous_section_break(children: list[ET.Element], before: int) -> int:
+    for index in range(before - 1, -1, -1):
+        if has_section_break(children[index]):
+            return index
+    return before
+
+
+def has_section_break(element: ET.Element) -> bool:
+    return element.find("w:pPr/w:sectPr", WORD_NS) is not None
+
+
 def build_document_xml(works: list[Work]) -> str:
     body: list[str] = []
     body.append(paragraph("作品一覧", style="Title"))
@@ -318,19 +572,22 @@ def validate_works(works: list[Work]) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="作品情報フォーム.xlsx からパンフレットの可変部分を生成します。",
+        description="作品情報フォーム.xlsx からパンフレットを生成します。",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent(
             """\
             例:
               python scripts/generate.py
-              python scripts/generate.py --input 作品情報フォーム.xlsx --docx output/可変部分.docx
+              python scripts/generate.py --input 作品情報フォーム.xlsx --docx output/パンフレット.docx
+              python scripts/generate.py --plain-docx output/簡易版.docx
             """
         ),
     )
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT, help="入力する xlsx ファイル")
     parser.add_argument("--docx", type=Path, default=DEFAULT_DOCX_OUTPUT, help="出力する docx ファイル")
     parser.add_argument("--list", type=Path, default=DEFAULT_LIST_OUTPUT, help="確認用の作品一覧テキスト")
+    parser.add_argument("--template", type=Path, default=DEFAULT_TEMPLATE, help="書式をコピーする前回パンフレット docx")
+    parser.add_argument("--plain-docx", type=Path, help="テンプレートを使わない簡易版 docx も出力する場合の出力先")
     return parser.parse_args()
 
 
@@ -342,11 +599,15 @@ def main() -> None:
         raise SystemExit("作品データが見つかりませんでした。")
 
     write_list_text(works, args.list)
-    write_docx(works, args.docx)
+    write_template_docx(works, args.template, args.docx)
+    if args.plain_docx:
+        write_docx(works, args.plain_docx)
 
     print(f"作品数: {len(works)}")
     print(f"docx: {args.docx}")
     print(f"list: {args.list}")
+    if args.plain_docx:
+        print(f"plain docx: {args.plain_docx}")
 
     warnings = validate_works(works)
     if warnings:
