@@ -1,0 +1,10 @@
+.git
+.cursor
+output
+input
+templates
+tools
+webapp/frontend/node_modules
+webapp/frontend/dist
+**/__pycache__
+**/.pytest_cache
